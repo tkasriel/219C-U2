@@ -29,7 +29,7 @@ structure PlainPointer where
   upper : UpperAddr
   version : Version
   lower : LowerAddr
-deriving DecidableEq
+deriving DecidableEq, Repr
 
 /-- The 24-bit hidden payload carried inside a pointer. -/
 def payload (p : PlainPointer) : Block :=
