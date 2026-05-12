@@ -1,0 +1,91 @@
+
+
+module common {
+
+    type word_t = bv2;
+    type size_t = word_t;
+    
+    type opcode_t;
+
+    type lmapind_t = bv3;
+
+    // Attacker, and Victim keys
+    type key_t = enum { AtKey, ViKey };
+    
+    type nonce_t;
+
+    type value_t = enum { RAW, HAN };
+
+    datatype enc_state_t = Pln()
+        | DEnc(DEnc_val: enc_state_t, DEnc_key: key_t, DEnc_nonce: nonce_t, intcheck: boolean) 
+        | DDec(DDec_val: enc_state_t, DDec_key: key_t, DDec_nonce: nonce_t)
+        | PEnc(PEnc_val: enc_state_t, PEnc_key: key_t) 
+        | PDec(PDec_val: enc_state_t, PDec_key: key_t);
+
+    type data_t = word_t;
+
+    // Operation semantics should be independent of this
+    type ghost_data_t = record {
+        // Raw value
+        value: word_t,
+
+        // Value state (i.e. is this a handle or a raw value?)
+        vtype: value_t,
+
+        // Handle elements
+        // Base address (inclusive)
+        h_base: word_t,
+        // This is the current handle offset
+        h_offset: word_t,
+        // Allocation is [h_base, h_base+h_length)
+        h_length: word_t,
+
+        // Only modified by the encryption function
+        // Encryption state
+        enc_state: enc_state_t,
+        // True nonce for that allocation (used for authentication)
+        ca_nonce_true: nonce_t
+    };
+
+    type alloc_data_t = boolean;
+
+
+    type observable_t = record {
+        valid : boolean,
+        data_g : ghost_data_t
+    };
+
+    // Data map
+    type mem_t = [word_t]data_t;
+    // Local variable map
+    type lmap_t = [lmapind_t]data_t;
+    // Is this current cell allocated?
+    type alloc_map_t = [word_t]alloc_data_t;
+
+    // Ghost memory
+    type ghost_mem_t = [word_t]ghost_data_t;
+    // Ghost local variable map
+    type ghost_lmap_t = [lmapind_t]ghost_data_t;
+
+    type alloc_struct_t = record {
+        valid   : boolean,
+        allocg  : ghost_data_t,
+
+        newgmem : ghost_mem_t,
+        newamap : alloc_map_t
+    };
+
+    // Action performed by the process
+    type action_t = enum { 
+        MALLOC, FREE, LOAD, STORE, HANOP, ARITHOP
+    };
+
+
+    // Constants
+    const zero  : word_t = 0bv2;
+    const one   : word_t = 1bv2;
+    const wmax  : word_t = 3bv2;
+
+    define between (a: word_t, b : word_t, c: word_t) : boolean = ((b <=_u a) && (a <_u c));
+
+}

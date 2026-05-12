@@ -1,0 +1,78 @@
+
+
+module u2 {
+
+    type * = common.*;
+
+    const * = common.*;
+
+    define * = common.*;
+
+    // Ghost state
+    var ghost_mem   : ghost_mem_t;
+    var ghost_lmap  : ghost_lmap_t;
+    // Allocated map
+    var alloc_map: alloc_map_t;
+
+
+    // Current operation was a memory safety vulnerability
+    var msv_curr : boolean;
+    // Architectural observable
+    var observable : observable_t;
+
+    // Debugging
+    var addr_probe      : data_t;
+    var addr_probe_g    : ghost_data_t;
+    var addr_probe_true : word_t;
+    var data_probe      : data_t;
+    var data_probe_g    : ghost_data_t;
+    var data_probe_pre  : data_t;
+    var data_probe_pre_g: ghost_data_t;
+
+    var alloc_probe     : alloc_struct_t;
+    var src1_probe      : data_t;
+    var src1_probe_g    : ghost_data_t;
+    var src2_probe      : data_t;
+    var src2_probe_g    : ghost_data_t;
+
+
+    // Temporary local variable indices
+    var opcode : opcode_t;
+    var l1, l2, l3: lmapind_t;
+    var action: action_t;
+
+    init {
+        // Initially all cells are unallocated
+        assume (forall (a: word_t) :: (!alloc_map[a] && !shadow_mem[a].alloc));
+
+        // Initially all values (in lmap and memory) hold raw data (not pointers)
+        assume (forall (a: lmapind_t) :: ghost_lmap[a].vtype == RAW);
+        assume (forall (a: word_t) :: ghost_mem[a].vtype == RAW);
+
+        observable.valid = false;
+        msv_curr = false;
+    }
+
+    axiom slot_to_nonce_disjointness : 
+        (forall (i1: word_t, i2: word_t, i3: word_t, i4: word_t) :: (
+            non_overlapping_ranges(i1, i2, i3, i4) ==> (slot_to_nonce(i1, i2) != slot_to_nonce(i3, i4))
+        ))
+    ;
+
+    next {
+        havoc l1;
+        havoc l2;
+        havoc l3;
+        havoc opcode;
+        havoc action;
+
+        case 
+            (action == LOAD) : { call load(l1, l2, ViKey, ViKey); }
+            (action == STORE) : { call store(l1, l2, ViKey, ViKey); }
+            (action == MALLOC) : { call malloc(l1, ViKey, ViKey); }
+            (action == HANOP) : { call hanop(opcode, l1, l2, l3); }
+            (action == ARITHOP) : { call arithop(opcode, l1, l2, l3); }
+        esac
+    }
+
+}

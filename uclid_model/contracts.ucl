@@ -1,0 +1,36 @@
+
+
+module u2 {
+
+
+    define addr_must_be_handle (ghost_addr_bundle : ghost_data_t) : boolean = 
+        (ghost_addr_bundle.vtype == HAN);
+
+    define no_addr_overflow (h_base : word_t, h_offset : word_t) : boolean = 
+        (h_base <=_u wmax - h_offset);
+
+    define non_overlapping_ranges (b1: word_t, l1: word_t, b2: word_t, l2: word_t) : boolean =
+        // Both of these work and result in convergence with upto bv4
+        ((b1 <_u l1) && (b2 <_u l2) && !between (b1, b2, l2) && !between (b2, b1, l1));
+        // (b1 <_u l1) && (b2 <_u l2) && !((b1 <=_u (l2-one)) && (b2 <=_u (l1-one)));
+    
+    define handles_are_valid (ghost_addr_bundle: ghost_data_t) : boolean = 
+        (ghost_addr_bundle.vtype == HAN) ==> (zero <_u ghost_addr_bundle.h_length);
+
+    define value_matches_handle_iff_valid (addr: word_t, ghost_addr_bundle: ghost_data_t) : boolean = 
+        // Non-plain or non-handles do not match any-slot ("diffusion property")
+        ((ghost_addr_bundle.vtype != HAN || !is_Pln(ghost_addr_bundle.enc_state)) ==> (
+            forall (a1: word_t) :: (
+                forall (a2 : word_t) :: (
+                    (a1 <_u a2) ==> (ghost_to_nonce(ghost_addr_bundle) != slot_to_nonce(a1, a2))
+                )
+            )
+        )) && ((ghost_addr_bundle.vtype == HAN && is_Pln(ghost_addr_bundle.enc_state)) ==> (
+            ghost_to_nonce(ghost_addr_bundle) == 
+                slot_to_nonce(ghost_addr_bundle.h_base, ghost_addr_bundle.h_base+ghost_addr_bundle.h_length)
+            && ghost_addr_bundle.value == ghost_to_addr_value(ghost_addr_bundle)
+        ))
+    ;
+
+
+}

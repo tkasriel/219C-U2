@@ -1,0 +1,149 @@
+
+
+module u2 {
+
+    // Encryption and decryption functions: these are left uninterpreted
+    function cdecrypt (addr_in: word_t, key: key_t) : word_t;
+    function cencrypt (addr_in: word_t, key: key_t) : word_t;
+    // Data encryption and decryption
+    function dencrypt (value_in: word_t, key: key_t, ca: nonce_t) : word_t;
+    function ddecrypt (value_in: word_t, key: key_t, ca: nonce_t) : word_t;
+
+    // Is the value cryptographically "unreadable?"
+    // Given a history of previously seen ciphertexts
+    function is_garbled (previously_seen : [integer]word_t, value_in: word_t) : boolean;
+
+    axiom is_garbled (cencrypt (w, v))
+
+    // For a given range on the slot, what is the CA
+    // that maps to this slot
+    // This is the power-of-2 assumption from the C3 paper
+    function slot_to_nonce (s1: word_t, s2: word_t) : nonce_t;
+
+    function ghost_to_nonce (val: ghost_data_t) : nonce_t;
+
+    function ghost_to_addr_value (ghost_data: ghost_data_t) : data_t;
+
+
+    // Given an address what is the corresponding nonce?
+    function ca_to_nonce (addr: word_t) : nonce_t;
+
+    define is_garbled (enc_state : enc_state_t) : boolean = (
+        (is_DEnc(enc_state) && !is_Pln(enc_state.DEnc_val))
+        || is_DDec(enc_state)
+    );
+
+    // Operation over the RAW value of the data
+    procedure ca_decrypt (addr_in: data_t, key: key_t) 
+        returns (addr_out: data_t)
+    {
+        addr_out = cdecrypt(addr_in, key);   
+    }
+
+    // All cryptographic operations preserve the non-crypto fields
+    // and only operate on the crypto ADT elements
+    procedure ghost_ca_decrypt (ghost_addr_in: ghost_data_t, key: key_t) 
+        returns (ghost_addr_out: ghost_data_t)
+    {
+        // Core operation
+        // Preserves the internal values
+        ghost_addr_out.value = ghost_addr_in.value;
+        ghost_addr_out.vtype = ghost_addr_in.vtype;
+        ghost_addr_out.h_base = ghost_addr_in.h_base;
+        ghost_addr_out.h_offset = ghost_addr_in.h_offset;
+        ghost_addr_out.h_length = ghost_addr_in.h_length;
+
+        // Operation over the ADT-based abstraction
+        if (is_Pln(ghost_addr_in.enc_state) || is_PDec(ghost_addr_in.enc_state) 
+            || is_DEnc(ghost_addr_in.enc_state) || is_DDec(ghost_addr_in.enc_state)) {
+            ghost_addr_out.enc_state = PDec(ghost_addr_in.enc_state, key);
+        } else {
+            if (is_PEnc(ghost_addr_in.enc_state) 
+                && ghost_addr_in.enc_state.PEnc_key == key) {
+                ghost_addr_out.enc_state = ghost_addr_in.enc_state.PEnc_val;
+            } else {
+                // Unreachable
+                // assert(false);
+            }
+        }
+        ghost_addr_out.ca_nonce_true = ghost_addr_in.ca_nonce_true;
+    }
+
+
+    procedure ca_encrypt (addr_in: data_t, key: key_t) 
+        returns (addr_out: data_t)
+    {
+        addr_out = cencrypt(addr_in, key);
+    }
+
+    procedure ghost_ca_encrypt (ghost_addr_in: ghost_data_t, key: key_t)
+        returns (ghost_addr_out: ghost_data_t)
+    {
+        // Preserves the internal values
+        ghost_addr_out.value = ghost_addr_in.value;
+        ghost_addr_out.vtype = ghost_addr_in.vtype;
+        ghost_addr_out.h_base = ghost_addr_in.h_base;
+        ghost_addr_out.h_offset = ghost_addr_in.h_offset;
+        ghost_addr_out.h_length = ghost_addr_in.h_length;
+
+        ghost_addr_out.enc_state = PEnc(ghost_addr_in.enc_state, key);
+        ghost_addr_out.ca_nonce_true = ghost_addr_in.ca_nonce_true;
+    }
+
+
+    procedure data_encrypt (data_in: data_t, key: key_t, ca: nonce_t) 
+        returns (data_out: data_t)
+    {
+        data_out = dencrypt(data_in, key, ca);
+    }
+    
+    procedure ghost_data_encrypt (ghost_data_in: ghost_data_t, key: key_t, ca: nonce_t, old_ghost_data: ghost_data_t) 
+        returns (ghost_data_out: ghost_data_t)
+    {
+        // Core operation (kept uninterpreted)
+        ghost_data_out.value = ghost_data_in.value;
+        ghost_data_out.vtype     = ghost_data_in.vtype;
+        ghost_data_out.h_base     = ghost_data_in.h_base;
+        ghost_data_out.h_offset   = ghost_data_in.h_offset;
+        ghost_data_out.h_length   = ghost_data_in.h_length;
+
+        // Operation over the abstraction
+        // Integrity violation
+        if (old_ghost_data.ca_nonce_true != ca) {
+            ghost_data_out.enc_state = DEnc(ghost_data_in.enc_state, key, ca, false);
+        } else {
+            ghost_data_out.enc_state = DEnc(ghost_data_in.enc_state, key, ca, true);
+        }
+        ghost_data_out.ca_nonce_true = old_ghost_data.ca_nonce_true;
+    }
+
+    procedure data_decrypt (data_in: data_t, key: key_t, ca: nonce_t) 
+        returns (data_out: data_t)
+    {
+        data_out = ddecrypt(data_in, key, ca);
+    }
+
+    procedure ghost_data_decrypt (ghost_data_in: ghost_data_t, key: key_t, ca: nonce_t)
+        returns (ghost_data_out: ghost_data_t)
+    {
+        // Preserves the internal values
+        ghost_data_out.value      = ghost_data_in.value;
+        ghost_data_out.vtype     = ghost_data_in.vtype;
+        ghost_data_out.h_base     = ghost_data_in.h_base;
+        ghost_data_out.h_offset   = ghost_data_in.h_offset;
+        ghost_data_out.h_length   = ghost_data_in.h_length;
+
+
+        if (is_DEnc(ghost_data_in.enc_state) 
+            && ghost_data_in.enc_state.intcheck
+            && ghost_data_in.enc_state.DEnc_key == key 
+            && ghost_data_in.enc_state.DEnc_nonce == ca) {
+            ghost_data_out.enc_state = ghost_data_in.enc_state.DEnc_val;
+        } else {
+            ghost_data_out.enc_state = DDec(ghost_data_in.enc_state, key, ca);
+        }
+
+        ghost_data_out.ca_nonce_true  = ghost_data_in.ca_nonce_true;
+    }
+
+}

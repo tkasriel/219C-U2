@@ -1,0 +1,42 @@
+
+
+module u2 {
+
+
+    procedure [noinline] shadow_malloc_helper (as: alloc_struct_t) 
+        returns (nm: shadow_mem_t)
+        ensures (
+            // New memory is allocated in the ghost state
+            //  with the correct allocation interval information
+            (forall (a: word_t) :: (
+                (between (a, as.allocg.h_base, (as.allocg.h_base + as.allocg.h_length)))
+                ==> (
+                    nm[a].alloc
+                    && nm[a].lowend == as.allocg.h_base
+                    && nm[a].highend == as.allocg.h_base + as.allocg.h_length
+                    // True nonce (currently needs to be non-shadow)
+                    // && nm[a].nonce_true == 
+                    //     slot_to_nonce(as.alloca.h_base, as.alloca.h_base + as.alloca.h_length)
+                )
+            ))
+            // Originally shadow_mem is unoccupied
+            && (forall (a: word_t) :: (
+                (between (a, as.allocg.h_base, (as.allocg.h_base + as.allocg.h_length)))
+                ==> (!shadow_mem[a].alloc)
+            ))
+            // And memory outside this interval stays the same
+            && (forall (a: word_t) :: (
+                (!(between (a, as.allocg.h_base, (as.allocg.h_base + as.allocg.h_length)))) 
+                ==> nm[a] == shadow_mem[a]
+            ))
+        );
+    { }
+
+    procedure shadow_malloc (as: alloc_struct_t)
+        modifies shadow_mem;
+    {
+        // Call the helper function
+        call (shadow_mem) = shadow_malloc_helper(as);
+    }
+
+}

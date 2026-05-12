@@ -1,0 +1,310 @@
+
+
+module u2 {
+
+    function hanop_fun (oldoff: word_t, operand: word_t) : word_t;
+
+
+    procedure [noinline] malloc_helper (s: size_t, pkey: key_t, dkey: key_t) 
+        returns (as: alloc_struct_t)
+        ensures ((
+                s == zero ==> (!as.valid)
+            ) && ((
+                // was able to perform the allocation
+                as.valid
+                // returned value is a handle type (raw value does not matter)
+                && (as.allocg.vtype == HAN)
+                // allocation has size s
+                && (as.allocg.h_length == s)
+                // allocation is in a valid interval
+                && (no_addr_overflow(as.allocg.h_base, s))
+                // current offset is zero
+                && (as.allocg.h_offset == zero)
+                // generated pointer is p_encrypted
+                && (as.allocg.enc_state == PEnc(Pln(), pkey))
+                // Underlying data value matches the handle
+                && (as.allocg.value == as.allocg.h_base)
+                // so ca nonce does not matter (since no data encryption)
+                && true
+                // allocation interval was free originally
+                && (forall (a: word_t) :: (
+                    (between(a, as.allocg.h_base, (as.allocg.h_base + s)))
+                    ==> !alloc_map[a]
+                ))
+                // allocation interval is now claimed
+                && (forall (a: word_t) :: (
+                    (between(a, as.allocg.h_base, (as.allocg.h_base + s)))
+                    ==> as.newamap[a]
+                ))
+                // mem outside allocation interval is the same
+                // and ghost_mem
+                && (forall (a: word_t) :: (
+                    (!(between (a, as.allocg.h_base, (as.allocg.h_base + s)))) 
+                    ==> as.newgmem[a] == ghost_mem[a]
+                ))
+                // mem in allocation interval is protected
+                //  and is not a pointer type
+                && (forall (a: word_t) :: (
+                    (between(a, as.allocg.h_base, (as.allocg.h_base + s)))
+                    ==> (as.newgmem[a].enc_state == DEnc(
+                            Pln(), 
+                            dkey, 
+                            slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s),
+                            true) 
+                        && as.newgmem[a].ca_nonce_true
+                            == slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s)
+                        && as.newgmem[a].vtype == RAW
+                    )
+                ))
+
+                // and allocation map
+                && (forall (a: word_t) :: (
+                    (!(between (a, as.allocg.h_base, (as.allocg.h_base + s)))) 
+                    ==> as.newamap[a] == alloc_map[a]
+                ))) 
+                // was not able to perform allocation
+                || !as.valid 
+            )
+        );
+    { }
+
+
+    procedure malloc (lind: lmapind_t, pkey: key_t, dkey: key_t) 
+        modifies ghost_mem, ghost_lmap;
+        // Shadow state
+        modifies shadow_mem;
+        modifies alloc_map;
+        // Debugging
+        modifies data_probe, data_probe_g, alloc_probe;
+    {
+        var as : alloc_struct_t;
+
+        var nondet_size: word_t;
+
+        // Call the helper function
+        call (as) = malloc_helper(nondet_size, pkey, dkey);
+
+        // If the allocation was successful, update the local variable map
+        if (as.valid) {
+            // Update the shadow state
+            call shadow_malloc(as);
+
+            ghost_lmap[lind] = as.allocg;
+            ghost_mem = as.newgmem;
+            alloc_map = as.newamap;
+        }
+
+        data_probe_g = ghost_lmap[lind];
+        alloc_probe = as;
+
+    }
+
+
+    procedure load (lind_dest: lmapind_t, lind_addr: lmapind_t, pkey: key_t, dkey: key_t)
+        modifies msv_curr, observable;
+        modifies ghost_lmap;
+        // Debugging
+        modifies addr_probe, data_probe, data_probe_pre;
+        modifies addr_probe_g, data_probe_g, data_probe_pre_g, addr_probe_true;
+    {
+        var addr_bundle     : data_t;
+        var addr_bundle_g   : ghost_data_t;
+        var h_base          : word_t;
+        var h_offset        : word_t;
+        var h_length        : word_t;
+        var addr            : word_t;
+        var cell_data       : data_t;
+        var cell_data_g     : ghost_data_t;
+        var cell_alloc      : alloc_data_t;
+        var dec_cell_data   : data_t;
+        var dec_cell_data_g : ghost_data_t;
+
+        // Get the linear address bundle and value
+        call (addr_bundle_g) = ghost_ca_decrypt(ghost_lmap[lind_addr], pkey);
+
+
+        // extract fields
+        h_base = addr_bundle_g.h_base;
+        h_offset = addr_bundle_g.h_offset;
+        h_length = addr_bundle_g.h_length;
+        // compute the address
+        // INFO: ghost_to_nonce is the more precise
+        addr = ghost_to_addr_value(addr_bundle_g);
+
+        // address value does not wrap around heap boundary
+        assume(no_addr_overflow(h_base, h_offset));
+        
+        // definition of a spatial memory safety vulnerability
+        if (!between(h_offset, zero, h_length) || addr_bundle_g.vtype != HAN) {
+            msv_curr = true;
+        } else {
+            msv_curr = false;
+        }
+        
+        // get memory cell at the address
+        cell_data_g = ghost_mem[addr];
+        cell_alloc = alloc_map[addr];
+
+        if (!cell_alloc) {
+            // in this case, read is invalid, and there is a fault
+            observable.valid = false;
+        } else {
+
+            // INFO: ghost_to_nonce below is the accurate model
+            assume(value_matches_handle_iff_valid(addr, addr_bundle_g));
+
+            call (dec_cell_data_g) = ghost_data_decrypt(cell_data_g, dkey, 
+                ghost_to_nonce(addr_bundle_g)
+            );
+
+
+            // observable is the decrypted value of the cell
+            observable.valid = true;
+            observable.data_g = dec_cell_data_g;
+            
+            // decrypted data is placed as in in the local variable map
+            ghost_lmap[lind_dest] = dec_cell_data_g;
+            // Debugging probe
+            data_probe_pre = cell_data;
+            data_probe_pre_g = cell_data_g;
+            data_probe = dec_cell_data;
+            data_probe_g = dec_cell_data_g;
+        }
+        addr_probe = addr_bundle;
+        addr_probe_g = addr_bundle_g;
+        addr_probe_true = addr;
+    }
+
+
+    procedure store (lind_addr: lmapind_t, lind_val: lmapind_t, pkey: key_t, dkey: key_t)
+        modifies ghost_mem;
+        modifies msv_curr, observable;
+        // Debugging
+        modifies addr_probe, addr_probe_g, data_probe, data_probe_g;
+    {
+        var addr_bundle     : data_t;
+        var addr_bundle_g   : ghost_data_t;
+        var h_base          : word_t;
+        var h_offset        : word_t;
+        var h_length        : word_t;
+        var addr            : word_t;
+        var oldcell_data    : data_t;
+        var oldcell_data_g  : ghost_data_t;
+        var oldcell_alloc   : alloc_data_t;
+        var cell_data       : data_t;
+        var cell_data_g     : ghost_data_t;
+        var cell_alloc      : alloc_data_t;
+        var enc_cell_data   : data_t;
+        var enc_cell_data_g : ghost_data_t;
+
+        // Get the linear address bundle and value
+        call (addr_bundle_g) = ghost_ca_decrypt(ghost_lmap[lind_addr], pkey);
+
+        
+        // extract fields
+        h_base = addr_bundle_g.h_base;
+        h_offset = addr_bundle_g.h_offset;
+        h_length = addr_bundle_g.h_length;
+        // compute the address
+        // INFO: ghost_to_addr_value is the precise model
+        addr = ghost_to_addr_value(addr_bundle_g);
+
+        // no address overflow
+        assume(no_addr_overflow(h_base, h_offset));
+        // definition of a memory safety vulnerability
+        if (!between(h_offset, zero, h_length)) {
+            msv_curr = true;
+        } else {
+            msv_curr = false;
+        }
+
+        // Old cell location
+        oldcell_data_g = ghost_mem[addr];
+        oldcell_alloc = alloc_map[addr];
+
+        // Plaintext value of the store
+        cell_data_g = ghost_lmap[lind_val];
+        // Encrypted value of the store
+
+        // INFO: ghost_to_nonce below is the accurate model
+        call (enc_cell_data_g) = ghost_data_encrypt(cell_data_g, dkey,
+            ghost_to_nonce(addr_bundle_g),
+            oldcell_data_g
+        );
+
+
+        observable.valid = false;
+
+        if (oldcell_alloc) {
+            // in this case, write is invalid, and there is a fault
+        } else {
+            // Decrypted data is placed as in in the local variable map
+            ghost_mem[addr] = enc_cell_data_g;
+            // Debugging probe
+            data_probe = enc_cell_data;
+            data_probe_g = enc_cell_data_g;
+        }
+        addr_probe = addr_bundle;
+        addr_probe_g = addr_bundle_g;
+    }
+
+
+    procedure hanop (op: opcode_t, lind_dest: lmapind_t, lind_src1: lmapind_t, lind_src2: lmapind_t)
+        modifies ghost_lmap;
+        // Debugging
+        modifies data_probe, src1_probe, src2_probe;
+        modifies data_probe_g, src1_probe_g, src2_probe_g;
+    {
+        var newoffset: word_t;
+        var newdata: ghost_data_t;
+
+        // Abstraction for the hanop
+        var nondet_arg : word_t; 
+
+
+        // First operand must be a handle
+        src1_probe_g = ghost_lmap[lind_src1];
+
+        if (ghost_lmap[lind_src1].vtype == HAN) {
+            // Both the value and the handle offset are modulated by the same amount
+            newoffset = ghost_lmap[lind_src1].h_offset + nondet_arg;
+            assume (no_addr_overflow(ghost_lmap[lind_src1].h_base, newoffset));
+
+            newdata = ghost_lmap[lind_src1];
+            // With new offset defined by hanop_fun
+            newdata.h_offset = newoffset;
+
+            // Also shift the raw value by nondet_arg
+            newdata.value = newdata.value + nondet_arg;
+            ghost_lmap[lind_dest] = newdata;
+            
+        } else {
+            // Unhandle
+            assume (newdata.vtype == RAW);
+
+            // INFO: completely unconstrained
+            ghost_lmap[lind_dest] = newdata;
+        }
+        // Debugging probes
+        data_probe_g = newdata;
+    }
+
+
+    procedure arithop (op: opcode_t, lind_dest: lmapind_t, lind_src1: lmapind_t, lind_src2: lmapind_t)
+        modifies ghost_lmap;
+        // Debugging
+        modifies data_probe, data_probe_g;
+    {
+        var newdata : data_t;
+        var newdata_g : ghost_data_t;
+
+        // Result from expression evaluation is a non-handle
+        // The result can be arbitrary
+        assume (newdata_g.vtype == RAW);
+
+        ghost_lmap[lind_dest] = newdata_g;
+        // Debugging probe
+        data_probe = newdata;
+        data_probe_g = newdata_g;
+    }
+}

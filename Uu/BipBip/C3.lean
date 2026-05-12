@@ -57,13 +57,13 @@ private def encodedLower (p : EncodedPointer) : LowerAddr :=
 
 /-- Encode a decoded pointer into its C3-style encrypted representation. -/
 def encodePointer (mk : MasterKey) (p : PlainPointer) : EncodedPointer :=
-  packEncodedPointer p.radix (BipBip.decrypt mk (tweak p) (payload p)) p.lower
+  packEncodedPointer p.radix (BipBip.encrypt mk (tweak p) (payload p)) p.lower
 
 /-- Decode a C3-style encrypted pointer back into its structured representation. -/
 def decodePointer (mk : MasterKey) (p : EncodedPointer) : PlainPointer :=
   let radix := encodedRadix p
   let lower := encodedLower p
-  let plain := BipBip.encrypt mk (radix ++ lower) (encodedSlice p)
+  let plain := BipBip.decrypt mk (radix ++ lower) (encodedSlice p)
   {
     radix := radix
     upper := plain.extractLsb' 4 20
