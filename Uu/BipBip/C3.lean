@@ -44,15 +44,15 @@ def packEncodedPointer (radix : Radix) (cipherSlice : Block) (lower : LowerAddr)
   (radix ++ cipherSlice) ++ lower
 
 /-- Read the visible radix field from an encoded pointer. -/
-private def encodedRadix (p : EncodedPointer) : Radix :=
+def encodedRadix (p : EncodedPointer) : Radix :=
   p.extractLsb' 58 6
 
 /-- Read the protected 24-bit BipBip slice from an encoded pointer. -/
-private def encodedSlice (p : EncodedPointer) : Block :=
+def encodedSlice (p : EncodedPointer) : Block :=
   p.extractLsb' 34 24
 
 /-- Read the visible low address bits from an encoded pointer. -/
-private def encodedLower (p : EncodedPointer) : LowerAddr :=
+def encodedLower (p : EncodedPointer) : LowerAddr :=
   p.extractLsb' 0 34
 
 /-- Encode a decoded pointer into its C3-style encrypted representation. -/
@@ -70,6 +70,63 @@ def decodePointer (mk : MasterKey) (p : EncodedPointer) : PlainPointer :=
     version := plain.extractLsb' 0 4
     lower := lower
   }
+
+/-- Extracting the radix field from a packed encoded pointer returns the original radix. -/
+theorem encodedRadix_packEncodedPointer
+    (radix : Radix) (cipherSlice : Block) (lower : LowerAddr) :
+    encodedRadix (packEncodedPointer radix cipherSlice lower) = radix := by
+  calc
+    encodedRadix (packEncodedPointer radix cipherSlice lower)
+      = (radix ++ cipherSlice).extractLsb' 24 6 := by
+          simpa [encodedRadix, packEncodedPointer, Nat.add_assoc] using
+            (BitVec.extractLsb'_append_eq_of_le
+              (xhi := radix ++ cipherSlice) (xlo := lower) (start := 58) (len := 6) (by omega))
+    _ = radix := by
+          simpa using (BitVec.extractLsb'_append_eq_left (a := radix) (b := cipherSlice))
+
+/-- Extracting the protected slice from a packed encoded pointer returns the original slice. -/
+theorem encodedSlice_packEncodedPointer
+    (radix : Radix) (cipherSlice : Block) (lower : LowerAddr) :
+    encodedSlice (packEncodedPointer radix cipherSlice lower) = cipherSlice := by
+  calc
+    encodedSlice (packEncodedPointer radix cipherSlice lower)
+      = (radix ++ cipherSlice).extractLsb' 0 24 := by
+          simpa [encodedSlice, packEncodedPointer, Nat.add_assoc] using
+            (BitVec.extractLsb'_append_eq_of_le
+              (xhi := radix ++ cipherSlice) (xlo := lower) (start := 34) (len := 24) (by omega))
+    _ = cipherSlice := by
+          simpa using (BitVec.extractLsb'_append_eq_right (a := radix) (b := cipherSlice))
+
+/-- Extracting the low address field from a packed encoded pointer returns the original lower bits. -/
+theorem encodedLower_packEncodedPointer
+    (radix : Radix) (cipherSlice : Block) (lower : LowerAddr) :
+    encodedLower (packEncodedPointer radix cipherSlice lower) = lower := by
+  simpa [encodedLower, packEncodedPointer, Nat.add_assoc] using
+    (BitVec.extractLsb'_append_eq_right (a := radix ++ cipherSlice) (b := lower))
+
+/-- Repacking the three extracted fields of an encoded pointer yields the original pointer. -/
+theorem packEncodedPointer_encoded_fields (p : EncodedPointer) :
+    packEncodedPointer (encodedRadix p) (encodedSlice p) (encodedLower p) = p := by
+  change ((p.extractLsb' 58 6 ++ p.extractLsb' 34 24) ++ p.extractLsb' 0 34) = p
+  have hmid : p.extractLsb' 58 6 ++ p.extractLsb' 34 24 = p.extractLsb' 34 30 := by
+    simpa using
+      (BitVec.extractLsb'_append_extractLsb'_eq_extractLsb'
+        (x := p) (start₁ := 34) (len₁ := 24) (start₂ := 58) (len₂ := 6) rfl)
+  rw [hmid]
+  simpa using (BitVec.extractLsb'_append_extractLsb' (x := p) (len := 34) (w := 30))
+
+/--
+The hidden payload recovered by `decodePointer` is exactly the BipBip decryption of the extracted
+slice under the extracted tweak.
+-/
+theorem payload_decodePointer_eq
+    (mk : MasterKey) (p : EncodedPointer) :
+    payload (decodePointer mk p) =
+      BipBip.decrypt mk (encodedRadix p ++ encodedLower p) (encodedSlice p) := by
+  let plain := BipBip.decrypt mk (encodedRadix p ++ encodedLower p) (encodedSlice p)
+  have hplain : plain.extractLsb' 4 20 ++ plain.extractLsb' 0 4 = plain := by
+    simpa [plain] using (BitVec.extractLsb'_append_extractLsb' (x := plain) (len := 4) (w := 20))
+  simpa [decodePointer, payload, plain] using hplain
 
 /-- A concrete sample pointer used for executable round-trip checks. -/
 private def samplePointer : PlainPointer :=

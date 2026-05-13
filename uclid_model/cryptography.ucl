@@ -5,15 +5,32 @@ module u2 {
     // Encryption and decryption functions: these are left uninterpreted
     function cdecrypt (addr_in: word_t, key: key_t) : word_t;
     function cencrypt (addr_in: word_t, key: key_t) : word_t;
+    // Symbolic attacker interface for tampering-based pointer recovery.
+    function tamper (target: word_t) : word_t;
+    function predict_payload (tampered_target: word_t) : word_t;
     // Data encryption and decryption
     function dencrypt (value_in: word_t, key: key_t, ca: nonce_t) : word_t;
     function ddecrypt (value_in: word_t, key: key_t, ca: nonce_t) : word_t;
 
-    // Is the value cryptographically "unreadable?"
-    // Given a history of previously seen ciphertexts
-    function is_garbled (previously_seen : [integer]word_t, value_in: word_t) : boolean;
+    // Correct decryption of a fresh pointer ciphertext.
+    axiom forall (p: word_t) ::
+        cdecrypt(cencrypt(p, AtKey), AtKey) == p
+        && cdecrypt(cencrypt(p, ViKey), ViKey) == p;
 
-    axiom is_garbled (cencrypt (w, v))
+    // The tampered target must actually differ from the honest ciphertext.
+    axiom forall (target_plain: word_t) ::
+        tamper(cencrypt(target_plain, AtKey))
+            != cencrypt(target_plain, AtKey)
+        && tamper(cencrypt(target_plain, ViKey))
+            != cencrypt(target_plain, ViKey);
+
+    // Lean-style tampering theorem: after tampering with a target ciphertext,
+    // the attacker cannot correctly predict the recovered plaintext.
+    axiom forall (target_plain: word_t) ::
+        predict_payload(tamper(cencrypt(target_plain, AtKey)))
+            != cdecrypt(tamper(cencrypt(target_plain, AtKey)), AtKey)
+        && predict_payload(tamper(cencrypt(target_plain, ViKey)))
+            != cdecrypt(tamper(cencrypt(target_plain, ViKey)), ViKey);
 
     // For a given range on the slot, what is the CA
     // that maps to this slot
