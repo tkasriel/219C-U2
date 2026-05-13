@@ -7,6 +7,12 @@ open OracleComp
 /-- A C3 attacker sees prior encoded pointers and a fresh target encoded pointer. -/
 abbrev C3MultiPointerAttacker := List EncodedPointer → EncodedPointer → PlainPointer
 
+/-- A tampering function on encoded C3 pointers. -/
+abbrev C3Tamperer := List EncodedPointer → EncodedPointer → EncodedPointer
+
+/-- An attacker that tries to predict the hidden payload of a tampered encoded C3 pointer. -/
+abbrev C3TamperedPayloadAttacker := List EncodedPointer → EncodedPointer → Block
+
 /--
 The attacker `A` cannot recover `target` from the encoder outputs of `history` and `target`
 themselves, when the master key is sampled uniformly at random.
@@ -68,6 +74,23 @@ def encodedPointerPlaintextRecoveryImpossible
     (history : List PlainPointer)
     (target : PlainPointer) : Prop :=
   isConfidential BipBip.C3.encodePointer A history target
+
+/--
+The hidden payload carried by a tampered encoded C3 pointer cannot be recovered by attacker `A`
+from the encoded history and the tampered pointer with nonzero probability.
+-/
+def tamperedEncodedPointerPayloadRecoveryImpossible
+    (τ : C3Tamperer)
+    (A : C3TamperedPayloadAttacker)
+    (history : List PlainPointer)
+    (target : PlainPointer) : Prop :=
+  (Pr[= true |
+      (do
+        let mk ← ($ᵗ MasterKey)
+        let seenHistory := history.map (BipBip.C3.encodePointer mk)
+        let seenTarget := BipBip.C3.encodePointer mk target
+        let tampered := τ seenHistory seenTarget
+        pure (decide (A seenHistory tampered = payload (BipBip.C3.decodePointer mk tampered))))]).toReal = 0
 
 /--
 C3 confidentiality in the multi-pointer plaintext-recovery formulation.
@@ -147,6 +170,43 @@ private def bipbipTargetOfC3 (target : PlainPointer) : BipBipHiddenSample :=
 private def encodeSeenSample (s : BipBipSeenSample) : EncodedPointer :=
   packEncodedPointer (tweakRadix s.tweak) s.ciphertext (tweakLower s.tweak)
 
+/-- Repackage an encoded C3 pointer as the corresponding observed BipBip sample. -/
+private def seenSampleOfEncodedPointer (p : EncodedPointer) : BipBipSeenSample where
+  tweak := encodedRadix p ++ encodedLower p
+  ciphertext := encodedSlice p
+
+/-- Repackaging an observed BipBip sample as an encoded C3 pointer and back is the identity. -/
+private theorem seenSampleOfEncodedPointer_encodeSeenSample (s : BipBipSeenSample) :
+    seenSampleOfEncodedPointer (encodeSeenSample s) = s := by
+  cases s with
+  | mk tweak ciphertext =>
+      simp [seenSampleOfEncodedPointer, encodeSeenSample, encodedRadix_packEncodedPointer,
+        encodedSlice_packEncodedPointer, encodedLower_packEncodedPointer, tweakRadix, tweakLower]
+      simpa using (BitVec.extractLsb'_append_extractLsb' (x := tweak) (len := 34) (w := 6))
+
+/-- Repackaging an encoded C3 pointer as an observed BipBip sample and back is the identity. -/
+private theorem encodeSeenSample_seenSampleOfEncodedPointer (p : EncodedPointer) :
+    encodeSeenSample (seenSampleOfEncodedPointer p) = p := by
+  calc
+    encodeSeenSample (seenSampleOfEncodedPointer p)
+      = packEncodedPointer
+          (tweakRadix (encodedRadix p ++ encodedLower p))
+          (encodedSlice p)
+          (tweakLower (encodedRadix p ++ encodedLower p)) := by
+            rfl
+    _ = packEncodedPointer (encodedRadix p) (encodedSlice p) (encodedLower p) := by
+          rw [show tweakRadix (encodedRadix p ++ encodedLower p) = encodedRadix p by
+                exact BitVec.extractLsb'_append_eq_left,
+              show tweakLower (encodedRadix p ++ encodedLower p) = encodedLower p by
+                exact BitVec.extractLsb'_append_eq_right]
+    _ = p := packEncodedPointer_encoded_fields p
+
+/-- Rewrapping observed BipBip samples as encoded pointers is injective. -/
+private theorem encodeSeenSample_injective : Function.Injective encodeSeenSample := by
+  intro s₁ s₂ h
+  simpa [seenSampleOfEncodedPointer_encodeSeenSample s₁, seenSampleOfEncodedPointer_encodeSeenSample s₂]
+    using congrArg seenSampleOfEncodedPointer h
+
 /-- Rewrapping an observed hidden sample yields exactly the corresponding encoded C3 pointer. -/
 private theorem encodeSeenSample_observe_hiddenSampleOfPointer
     (mk : MasterKey) (p : PlainPointer) :
@@ -219,6 +279,73 @@ private def payloadPredictor
     payload (A (history.map encodeSeenSample) (packEncodedPointer (tweakRadix targetTweak)
       targetCipher (tweakLower targetTweak)))
 
+/-- Translate a C3 tampering function to the corresponding tampering function on BipBip samples. -/
+private def bipbipTampererOfC3 (τ : C3Tamperer) : BipBipTamperer :=
+  fun history target =>
+    seenSampleOfEncodedPointer (τ (history.map encodeSeenSample) (encodeSeenSample target))
+
+/-- Translate a C3 hidden-payload attacker to the corresponding BipBip attacker. -/
+private def bipbipTamperedPayloadAttackerOfC3
+    (A : C3TamperedPayloadAttacker) : BipBipTamperedPayloadAttacker :=
+  fun history target =>
+    A (history.map encodeSeenSample) (encodeSeenSample target)
+
+/-- A modifying C3 tamperer induces a modifying BipBip tamperer after rewrapping. -/
+private theorem bipbipTampererOfC3_modifies
+    (τ : C3Tamperer)
+    (hτ : ∀ (history : List EncodedPointer) (target : EncodedPointer), τ history target ≠ target) :
+    ∀ (history : List BipBipSeenSample) (target : BipBipSeenSample),
+      bipbipTampererOfC3 τ history target ≠ target := by
+  intro history target hEq
+  apply hτ (history.map encodeSeenSample) (encodeSeenSample target)
+  have h' := congrArg encodeSeenSample hEq
+  simpa [bipbipTampererOfC3, seenSampleOfEncodedPointer_encodeSeenSample,
+    encodeSeenSample_seenSampleOfEncodedPointer] using h'
+
+/-- Pointwise equivalence between the C3 and BipBip tampered hidden-payload success predicates. -/
+private theorem tampered_payload_success_iff
+    (τ : C3Tamperer)
+    (A : C3TamperedPayloadAttacker)
+    (history : List PlainPointer)
+    (target : PlainPointer)
+    (mk : MasterKey) :
+    let seenHistory := history.map (encodePointer mk)
+    let seenTarget := encodePointer mk target
+    let tampered := τ seenHistory seenTarget
+    A seenHistory tampered = payload (decodePointer mk tampered) ↔
+      let bipHist := bipbipObservedHistory mk (bipbipHistoryOfC3 history)
+      let bipTarget := BipBipHiddenSample.observe mk (bipbipTargetOfC3 target)
+      let tamperedSeen := bipbipTampererOfC3 τ bipHist bipTarget
+      bipbipTamperedPayloadAttackerOfC3 A bipHist tamperedSeen =
+        BipBip.decrypt mk tamperedSeen.tweak tamperedSeen.ciphertext := by
+  dsimp
+  have hHist :
+      (bipbipObservedHistory mk (bipbipHistoryOfC3 history)).map encodeSeenSample =
+        history.map (encodePointer mk) :=
+    observedHistory_wrapped_eq_encodedHistory mk history
+  have hTarget :
+      encodeSeenSample (BipBipHiddenSample.observe mk (bipbipTargetOfC3 target)) =
+        encodePointer mk target := by
+    simpa [bipbipTargetOfC3] using encodeSeenSample_observe_hiddenSampleOfPointer mk target
+  let tampered := τ (history.map (encodePointer mk)) (encodePointer mk target)
+  have hSeen :
+      bipbipTampererOfC3 τ (bipbipObservedHistory mk (bipbipHistoryOfC3 history))
+        (BipBipHiddenSample.observe mk (bipbipTargetOfC3 target)) =
+          seenSampleOfEncodedPointer tampered := by
+    simp [bipbipTampererOfC3, tampered, hHist, hTarget]
+  have hPayload :
+      payload (decodePointer mk tampered) =
+        BipBip.decrypt mk (seenSampleOfEncodedPointer tampered).tweak
+          (seenSampleOfEncodedPointer tampered).ciphertext := by
+    simpa [seenSampleOfEncodedPointer] using (payload_decodePointer_eq mk tampered)
+  constructor <;> intro h
+  · rw [hSeen]
+    simpa [bipbipTamperedPayloadAttackerOfC3, tampered, hHist, hPayload,
+      encodeSeenSample_seenSampleOfEncodedPointer] using h
+  · rw [hSeen] at h
+    simpa [bipbipTamperedPayloadAttackerOfC3, tampered, hHist, hPayload,
+      encodeSeenSample_seenSampleOfEncodedPointer] using h
+
 /--
 Success in the C3 recovery game implies success of the induced BipBip multi-chosen-tweak payload
 predictor on the translated instance.
@@ -272,6 +399,64 @@ theorem c3RecoverySuccessProbability_le_bipbip
     simpa [bipbipTargetOfC3, hiddenSampleOfPointer] using hs
   unfold c3RecoverySuccessProbability bipbipObservedCipherPredictionSuccessProbability
   exact (ENNReal.toReal_le_toReal probOutput_ne_top probOutput_ne_top).mpr hprob
+
+/--
+If tampered observed-cipher BipBip plaintext recovery succeeds with probability `0`, then tampered
+encoded C3 pointers do not reveal their hidden payloads with nonzero probability either.
+-/
+theorem tamperedEncodedPointerPayloadRecoveryImpossible_of_bipbipTamperedObservedCipherPredictionImpossible
+    (h : BipBipTamperedObservedCipherPredictionImpossible) :
+    ∀ (τ : C3Tamperer)
+      (hτ : ∀ (history : List EncodedPointer) (target : EncodedPointer), τ history target ≠ target)
+      (A : C3TamperedPayloadAttacker)
+      (history : List PlainPointer)
+      (target : PlainPointer),
+      tamperedEncodedPointerPayloadRecoveryImpossible τ A history target := by
+  intro τ hτ A history target
+  unfold tamperedEncodedPointerPayloadRecoveryImpossible
+  have hEq :
+      (Pr[= true |
+        (do
+          let mk ← ($ᵗ MasterKey)
+          let seenHistory := history.map (BipBip.C3.encodePointer mk)
+          let seenTarget := BipBip.C3.encodePointer mk target
+          let tampered := τ seenHistory seenTarget
+          pure (decide (A seenHistory tampered = payload (BipBip.C3.decodePointer mk tampered))))]).toReal =
+      (Pr[= true |
+        bipbipTamperedObservedCipherPredictionGame
+          (bipbipTampererOfC3 τ)
+          (bipbipTamperedPayloadAttackerOfC3 A)
+          (bipbipHistoryOfC3 history)
+          (bipbipTargetOfC3 target)]).toReal := by
+    apply congrArg ENNReal.toReal
+    refine probOutput_bind_congr' ($ᵗ MasterKey) true ?_
+    intro mk
+    have hiff := tampered_payload_success_iff τ A history target mk
+    by_cases hs :
+        let seenHistory := history.map (BipBip.C3.encodePointer mk)
+        let seenTarget := BipBip.C3.encodePointer mk target
+        let tampered := τ seenHistory seenTarget
+        A seenHistory tampered = payload (BipBip.C3.decodePointer mk tampered)
+    · have hs' :
+          let bipHist := bipbipObservedHistory mk (bipbipHistoryOfC3 history)
+          let bipTarget := BipBipHiddenSample.observe mk (bipbipTargetOfC3 target)
+          let tamperedSeen := bipbipTampererOfC3 τ bipHist bipTarget
+          bipbipTamperedPayloadAttackerOfC3 A bipHist tamperedSeen =
+            BipBip.decrypt mk tamperedSeen.tweak tamperedSeen.ciphertext := hiff.mp hs
+      simp [hs, hs']
+    · have hs' :
+          ¬
+            (let bipHist := bipbipObservedHistory mk (bipbipHistoryOfC3 history)
+             let bipTarget := BipBipHiddenSample.observe mk (bipbipTargetOfC3 target)
+             let tamperedSeen := bipbipTampererOfC3 τ bipHist bipTarget
+             bipbipTamperedPayloadAttackerOfC3 A bipHist tamperedSeen =
+               BipBip.decrypt mk tamperedSeen.tweak tamperedSeen.ciphertext) := by
+            intro h'
+            exact hs (hiff.mpr h')
+      simp [hs, hs']
+  rw [hEq]
+  exact h (bipbipTampererOfC3 τ) (bipbipTampererOfC3_modifies τ hτ)
+    (bipbipTamperedPayloadAttackerOfC3 A) (bipbipHistoryOfC3 history) (bipbipTargetOfC3 target)
 
 /--
 If multi-chosen-tweak BipBip plaintext recovery succeeds with probability `0`, then

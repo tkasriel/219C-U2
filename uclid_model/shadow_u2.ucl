@@ -2,6 +2,19 @@
 
 module u2 {
 
+    type shadow_tracking_t = record {
+        // Is this current part of an allocation interval?
+        alloc: boolean,
+        // Slot low (what is the lower limit of the slot)?
+        lowend: word_t,
+        // Slot high (what is the upper limit on the slot)?
+        highend: word_t,
+        // Nonce
+        nonce_true: nonce_t
+    };
+
+    type shadow_mem_t = [word_t]shadow_tracking_t;
+
     // Ghost memory with slots information
     var shadow_mem: shadow_mem_t;
 

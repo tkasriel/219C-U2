@@ -16,12 +16,6 @@ module common {
 
     type value_t = enum { RAW, HAN };
 
-    datatype enc_state_t = Pln()
-        | DEnc(DEnc_val: enc_state_t, DEnc_key: key_t, DEnc_nonce: nonce_t, intcheck: boolean) 
-        | DDec(DDec_val: enc_state_t, DDec_key: key_t, DDec_nonce: nonce_t)
-        | PEnc(PEnc_val: enc_state_t, PEnc_key: key_t) 
-        | PDec(PDec_val: enc_state_t, PDec_key: key_t);
-
     type data_t = word_t;
 
     // Operation semantics should be independent of this
@@ -40,9 +34,11 @@ module common {
         // Allocation is [h_base, h_base+h_length)
         h_length: word_t,
 
-        // Only modified by the encryption function
-        // Encryption state
-        enc_state: enc_state_t,
+        // Data-protection ghost state
+        data_encrypted: boolean,
+        data_key: key_t,
+        data_nonce: nonce_t,
+        data_intact: boolean,
         // True nonce for that allocation (used for authentication)
         ca_nonce_true: nonce_t
     };

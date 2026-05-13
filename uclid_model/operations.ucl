@@ -20,10 +20,10 @@ module u2 {
                 && (no_addr_overflow(as.allocg.h_base, s))
                 // current offset is zero
                 && (as.allocg.h_offset == zero)
-                // generated pointer is p_encrypted
-                && (as.allocg.enc_state == PEnc(Pln(), pkey))
-                // Underlying data value matches the handle
-                && (as.allocg.value == as.allocg.h_base)
+                // generated pointer value is encrypted under pkey
+                && (as.allocg.value == cencrypt(as.allocg.h_base, pkey))
+                && (!as.allocg.data_encrypted)
+                && (!as.allocg.data_intact)
                 // so ca nonce does not matter (since no data encryption)
                 && true
                 // allocation interval was free originally
@@ -46,11 +46,11 @@ module u2 {
                 //  and is not a pointer type
                 && (forall (a: word_t) :: (
                     (between(a, as.allocg.h_base, (as.allocg.h_base + s)))
-                    ==> (as.newgmem[a].enc_state == DEnc(
-                            Pln(), 
-                            dkey, 
-                            slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s),
-                            true) 
+                    ==> (as.newgmem[a].data_encrypted
+                        && (as.newgmem[a].data_key == dkey)
+                        && (as.newgmem[a].data_nonce
+                            == slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s))
+                        && as.newgmem[a].data_intact
                         && as.newgmem[a].ca_nonce_true
                             == slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s)
                         && as.newgmem[a].vtype == RAW
@@ -89,6 +89,9 @@ module u2 {
             // Update the shadow state
             call shadow_malloc(as);
 
+            assume ((as.allocg.vtype == HAN) ==> (
+                as.allocg.value == as.allocg.h_base + as.allocg.h_offset
+            ));
             ghost_lmap[lind] = as.allocg;
             ghost_mem = as.newgmem;
             alloc_map = as.newamap;
@@ -127,48 +130,55 @@ module u2 {
         h_base = addr_bundle_g.h_base;
         h_offset = addr_bundle_g.h_offset;
         h_length = addr_bundle_g.h_length;
-        // compute the address
-        // INFO: ghost_to_nonce is the more precise
-        addr = ghost_to_addr_value(addr_bundle_g);
+        // use the decrypted pointer representation as the architectural address
+        addr = addr_bundle_g.value;
 
         // address value does not wrap around heap boundary
         assume(no_addr_overflow(h_base, h_offset));
         
         // definition of a spatial memory safety vulnerability
-        if (!between(h_offset, zero, h_length) || addr_bundle_g.vtype != HAN) {
+        if (!between(h_offset, zero, h_length)
+            || addr_bundle_g.vtype != HAN
+            || addr != ghost_to_addr_value(addr_bundle_g)) {
             msv_curr = true;
         } else {
             msv_curr = false;
         }
         
-        // get memory cell at the address
-        cell_data_g = ghost_mem[addr];
-        cell_alloc = alloc_map[addr];
-
-        if (!cell_alloc) {
-            // in this case, read is invalid, and there is a fault
+        if (msv_curr) {
             observable.valid = false;
         } else {
+            // get memory cell at the address
+            cell_data_g = ghost_mem[addr];
+            cell_alloc = alloc_map[addr];
 
-            // INFO: ghost_to_nonce below is the accurate model
-            assume(value_matches_handle_iff_valid(addr, addr_bundle_g));
+            if (!cell_alloc) {
+                // in this case, read is invalid, and there is a fault
+                observable.valid = false;
+            } else {
+                // INFO: ghost_to_nonce below is the accurate model
+                assume(value_matches_handle_iff_valid(addr, addr_bundle_g));
 
-            call (dec_cell_data_g) = ghost_data_decrypt(cell_data_g, dkey, 
-                ghost_to_nonce(addr_bundle_g)
-            );
+                call (dec_cell_data_g) = ghost_data_decrypt(cell_data_g, dkey, 
+                    ghost_to_nonce(addr_bundle_g)
+                );
 
 
-            // observable is the decrypted value of the cell
-            observable.valid = true;
-            observable.data_g = dec_cell_data_g;
-            
-            // decrypted data is placed as in in the local variable map
-            ghost_lmap[lind_dest] = dec_cell_data_g;
-            // Debugging probe
-            data_probe_pre = cell_data;
-            data_probe_pre_g = cell_data_g;
-            data_probe = dec_cell_data;
-            data_probe_g = dec_cell_data_g;
+                // observable is the decrypted value of the cell
+                observable.valid = true;
+                observable.data_g = dec_cell_data_g;
+                
+                // decrypted data is placed as in in the local variable map
+                assume ((dec_cell_data_g.vtype == HAN) ==> (
+                    dec_cell_data_g.value == dec_cell_data_g.h_base + dec_cell_data_g.h_offset
+                ));
+                ghost_lmap[lind_dest] = dec_cell_data_g;
+                // Debugging probe
+                data_probe_pre = cell_data;
+                data_probe_pre_g = cell_data_g;
+                data_probe = dec_cell_data;
+                data_probe_g = dec_cell_data_g;
+            }
         }
         addr_probe = addr_bundle;
         addr_probe_g = addr_bundle_g;
@@ -205,14 +215,15 @@ module u2 {
         h_base = addr_bundle_g.h_base;
         h_offset = addr_bundle_g.h_offset;
         h_length = addr_bundle_g.h_length;
-        // compute the address
-        // INFO: ghost_to_addr_value is the precise model
-        addr = ghost_to_addr_value(addr_bundle_g);
+        // use the decrypted pointer representation as the architectural address
+        addr = addr_bundle_g.value;
 
         // no address overflow
         assume(no_addr_overflow(h_base, h_offset));
         // definition of a memory safety vulnerability
-        if (!between(h_offset, zero, h_length)) {
+        if (!between(h_offset, zero, h_length)
+            || addr_bundle_g.vtype != HAN
+            || addr != ghost_to_addr_value(addr_bundle_g)) {
             msv_curr = true;
         } else {
             msv_curr = false;
@@ -248,6 +259,22 @@ module u2 {
         addr_probe_g = addr_bundle_g;
     }
 
+    next {
+        havoc l1;
+        havoc l2;
+        havoc l3;
+        havoc opcode;
+        havoc action;
+
+        case 
+            (action == LOAD) : { call load(l1, l2, ViKey, ViKey); }
+            (action == STORE) : { call store(l1, l2, ViKey, ViKey); }
+            (action == MALLOC) : { call malloc(l1, ViKey, ViKey); }
+            (action == HANOP) : { call hanop(opcode, l1, l2, l3); }
+            (action == ARITHOP) : { call arithop(opcode, l1, l2, l3); }
+        esac
+    }
+
 
     procedure hanop (op: opcode_t, lind_dest: lmapind_t, lind_src1: lmapind_t, lind_src2: lmapind_t)
         modifies ghost_lmap;
@@ -274,8 +301,12 @@ module u2 {
             // With new offset defined by hanop_fun
             newdata.h_offset = newoffset;
 
-            // Also shift the raw value by nondet_arg
-            newdata.value = newdata.value + nondet_arg;
+            // Keep the raw handle value explicitly synchronized with the
+            // updated base/offset pair.
+            newdata.value = newdata.h_base + newoffset;
+            assume ((newdata.vtype == HAN) ==> (
+                newdata.value == newdata.h_base + newdata.h_offset
+            ));
             ghost_lmap[lind_dest] = newdata;
             
         } else {

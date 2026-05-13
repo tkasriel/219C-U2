@@ -1,1 +1,12 @@
-uclid -s 'z3 -in' uclid_model/common.ucl uclid_model/contracts.ucl uclid_model/u2.ucl uclid_model/cryptography.ucl uclid_model/operations.ucl uclid_model/shadow_common.ucl uclid_model/shadow_u2.ucl uclid_model/shadow_operations.ucl uclid_model/main.ucl
+#!/usr/bin/env bash
+
+uclid \
+  uclid_model/common.ucl \
+  uclid_model/shadow_common.ucl \
+  uclid_model/u2.ucl \
+  uclid_model/contracts.ucl \
+  uclid_model/cryptography.ucl \
+  uclid_model/operations.ucl \
+  uclid_model/shadow_u2.ucl \
+  uclid_model/shadow_operations.ucl \
+  uclid_model/main.ucl

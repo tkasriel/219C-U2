@@ -81,4 +81,64 @@ def BipBipObservedCipherPredictionImpossible : Prop :=
     (target : BipBipHiddenSample),
     bipbipObservedCipherPredictionSuccessProbability A history target = 0
 
+/-- A tampering function on observed BipBip `(tweak, ciphertext)` pairs. -/
+abbrev BipBipTamperer := List BipBipSeenSample → BipBipSeenSample → BipBipSeenSample
+
+/--
+A BipBip attacker that tries to predict the plaintext underlying a tampered observed ciphertext.
+-/
+abbrev BipBipTamperedPayloadAttacker := List BipBipSeenSample → BipBipSeenSample → Block
+
+/--
+The tampered observed-cipher BipBip prediction game.
+
+A random master key is sampled, the attacker sees the observed history and target sample, a
+tampering function rewrites the target observation, and the attacker succeeds if it predicts the
+plaintext recovered from that tampered `(tweak, ciphertext)` pair.
+-/
+noncomputable def bipbipTamperedObservedCipherPredictionGame
+    (τ : BipBipTamperer)
+    (A : BipBipTamperedPayloadAttacker)
+    (history : List BipBipHiddenSample)
+    (target : BipBipHiddenSample) : ProbComp Bool := by
+  classical
+  exact do
+    let mk ← ($ᵗ MasterKey)
+    let seenHistory := bipbipObservedHistory mk history
+    let seenTarget := BipBipHiddenSample.observe mk target
+    let tampered := τ seenHistory seenTarget
+    pure (decide (A seenHistory tampered = BipBip.decrypt mk tampered.tweak tampered.ciphertext))
+
+/-- Success probability in the tampered observed-cipher BipBip prediction game. -/
+noncomputable def bipbipTamperedObservedCipherPredictionSuccessProbability
+    (τ : BipBipTamperer)
+    (A : BipBipTamperedPayloadAttacker)
+    (history : List BipBipHiddenSample)
+    (target : BipBipHiddenSample) : ℝ :=
+  (Pr[= true | bipbipTamperedObservedCipherPredictionGame τ A history target]).toReal
+
+/-- Tampered observed-cipher BipBip prediction success probabilities are always nonnegative. -/
+theorem bipbipTamperedObservedCipherPredictionSuccessProbability_nonneg
+    (τ : BipBipTamperer)
+    (A : BipBipTamperedPayloadAttacker)
+    (history : List BipBipHiddenSample)
+    (target : BipBipHiddenSample) :
+    0 ≤ bipbipTamperedObservedCipherPredictionSuccessProbability τ A history target := by
+  unfold bipbipTamperedObservedCipherPredictionSuccessProbability
+  exact ENNReal.toReal_nonneg
+
+/--
+Symbolic multi-chosen-tweak tamper-resistance assumption for BipBip.
+
+If the observed target `(tweak, ciphertext)` is modified before prediction, then the attacker still
+cannot recover the plaintext underlying the tampered pair with nonzero probability.
+-/
+def BipBipTamperedObservedCipherPredictionImpossible : Prop :=
+  ∀ (τ : BipBipTamperer)
+    (_hτ : ∀ (history : List BipBipSeenSample) (target : BipBipSeenSample), τ history target ≠ target)
+    (A : BipBipTamperedPayloadAttacker)
+    (history : List BipBipHiddenSample)
+    (target : BipBipHiddenSample),
+    bipbipTamperedObservedCipherPredictionSuccessProbability τ A history target = 0
+
 end BipBip.C3.Security
