@@ -6,7 +6,11 @@ module u2 {
 
     const * = common.*;
 
-    define * = common.*;
+    function * = common.*;
+
+    define between (a: word_t, b : word_t, c: word_t) : boolean = ((b <=_u a) && (a <_u c));
+    define non_overlapping_ranges (b1: word_t, l1: word_t, b2: word_t, l2: word_t) : boolean =
+        ((b1 <_u l1) && (b2 <_u l2) && !between (b1, b2, l2) && !between (b2, b1, l1));
 
     // Ghost state
     var ghost_mem   : ghost_mem_t;
@@ -48,6 +52,12 @@ module u2 {
         // Initially all values (in lmap and memory) hold raw data (not pointers)
         assume (forall (a: lmapind_t) :: ghost_lmap[a].vtype == RAW);
         assume (forall (a: word_t) :: ghost_mem[a].vtype == RAW);
+        assume (forall (a: lmapind_t) ::
+            !ghost_lmap[a].data_encrypted
+        );
+        assume (forall (a: word_t) ::
+            !ghost_mem[a].data_encrypted
+        );
 
         observable.valid = false;
         msv_curr = false;
@@ -58,21 +68,5 @@ module u2 {
             non_overlapping_ranges(i1, i2, i3, i4) ==> (slot_to_nonce(i1, i2) != slot_to_nonce(i3, i4))
         ))
     ;
-
-    next {
-        havoc l1;
-        havoc l2;
-        havoc l3;
-        havoc opcode;
-        havoc action;
-
-        case 
-            (action == LOAD) : { call load(l1, l2, ViKey, ViKey); }
-            (action == STORE) : { call store(l1, l2, ViKey, ViKey); }
-            (action == MALLOC) : { call malloc(l1, ViKey, ViKey); }
-            (action == HANOP) : { call hanop(opcode, l1, l2, l3); }
-            (action == ARITHOP) : { call arithop(opcode, l1, l2, l3); }
-        esac
-    }
 
 }

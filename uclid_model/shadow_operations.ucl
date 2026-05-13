@@ -2,7 +2,6 @@
 
 module u2 {
 
-
     procedure [noinline] shadow_malloc_helper (as: alloc_struct_t) 
         returns (nm: shadow_mem_t)
         ensures (
