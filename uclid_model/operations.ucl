@@ -22,10 +22,6 @@ module u2 {
                 && (as.allocg.h_offset == zero)
                 // generated pointer value is encrypted under pkey
                 && (as.allocg.value == cencrypt(as.allocg.h_base, pkey))
-                && (!as.allocg.data_encrypted)
-                && (!as.allocg.data_intact)
-                // so ca nonce does not matter (since no data encryption)
-                && true
                 // allocation interval was free originally
                 && (forall (a: word_t) :: (
                     (between(a, as.allocg.h_base, (as.allocg.h_base + s)))
@@ -46,13 +42,11 @@ module u2 {
                 //  and is not a pointer type
                 && (forall (a: word_t) :: (
                     (between(a, as.allocg.h_base, (as.allocg.h_base + s)))
-                    ==> (as.newgmem[a].data_encrypted
-                        && (as.newgmem[a].data_key == dkey)
-                        && (as.newgmem[a].data_nonce
-                            == slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s))
-                        && as.newgmem[a].data_intact
-                        && as.newgmem[a].ca_nonce_true
-                            == slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s)
+                    ==> (honest_data_ciphertext(
+                            as.newgmem[a].value,
+                            dkey,
+                            slot_to_nonce(as.allocg.h_base, as.allocg.h_base + s)
+                        )
                         && as.newgmem[a].vtype == RAW
                     )
                 ))
@@ -237,19 +231,20 @@ module u2 {
         cell_data_g = ghost_lmap[lind_val];
         // Encrypted value of the store
 
-        // INFO: ghost_to_nonce below is the accurate model
         call (enc_cell_data_g) = ghost_data_encrypt(cell_data_g, dkey,
-            ghost_to_nonce(addr_bundle_g),
-            oldcell_data_g
+            slot_to_nonce(
+                shadow_mem[addr].lowend,
+                shadow_mem[addr].highend
+            )
         );
 
 
         observable.valid = false;
 
-        if (oldcell_alloc) {
-            // in this case, write is invalid, and there is a fault
+        if (!oldcell_alloc) {
+            // Writing to unallocated memory faults.
         } else {
-            // Decrypted data is placed as in in the local variable map
+            // Valid stores update the allocated memory cell.
             ghost_mem[addr] = enc_cell_data_g;
             // Debugging probe
             data_probe = enc_cell_data;

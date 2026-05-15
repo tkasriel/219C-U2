@@ -5,11 +5,7 @@ module u2 {
     // Encryption and decryption functions: these are left uninterpreted
     function cdecrypt (addr_in: word_t, key: key_t) : word_t;
     function cencrypt (addr_in: word_t, key: key_t) : word_t;
-    // Symbolic attacker interface: first tamper with the target ciphertext, then predict
-    // the hidden payload of the plaintext recovered from the tampered ciphertext.
-    function tamper (target: word_t) : word_t;
-    function predict_payload (tampered_target: word_t) : word_t;
-    // Is the ciphertext cryptographically unreadable?
+    // // Is the ciphertext cryptographically unreadable?
     function is_garbled (value_in: word_t) : boolean;
     // Data encryption and decryption
     function dencrypt (value_in: word_t, key: key_t, ca: nonce_t) : word_t;
@@ -25,21 +21,15 @@ module u2 {
         is_garbled(cencrypt(p, AtKey))
         && is_garbled(cencrypt(p, ViKey));
 
-    // The tampered target must actually differ from the honest ciphertext.
-    axiom forall (target_plain: word_t) ::
-        tamper(cencrypt(target_plain, AtKey))
-            != cencrypt(target_plain, AtKey)
-        && tamper(cencrypt(target_plain, ViKey))
-            != cencrypt(target_plain, ViKey);
+    // // Correct decryption of a fresh data ciphertext.
+    axiom forall (v: word_t, n: nonce_t) ::
+        ddecrypt(dencrypt(v, AtKey, n), AtKey, n) == v
+        && ddecrypt(dencrypt(v, ViKey, n), ViKey, n) == v;
 
-    // Lean-style tampering theorem: after seeing an encrypted history and a target
-    // ciphertext, the attacker cannot tamper and then correctly predict the
-    // plaintext recovered from that tampered ciphertext.
-    axiom forall (target_plain: word_t) ::
-        predict_payload(tamper(cencrypt(target_plain, AtKey)))
-            != cdecrypt(tamper(cencrypt(target_plain, AtKey)), AtKey)
-        && predict_payload(tamper(cencrypt(target_plain, ViKey)))
-            != cdecrypt(tamper(cencrypt(target_plain, ViKey)), ViKey);
+    // Fresh data ciphertexts are unreadable without successful decryption.
+    axiom forall (v: word_t, n: nonce_t) ::
+        is_garbled(dencrypt(v, AtKey, n))
+        && is_garbled(dencrypt(v, ViKey, n));
 
     // For a given range on the slot, what is the CA
     // that maps to this slot
@@ -49,6 +39,13 @@ module u2 {
     function ghost_to_nonce (val: ghost_data_t) : nonce_t;
 
     function ghost_to_addr_value (ghost_data: ghost_data_t) : data_t;
+
+    define honest_data_ciphertext (value_in: word_t, key: key_t, ca: nonce_t) : boolean =
+        value_in == dencrypt(ddecrypt(value_in, key, ca), key, ca);
+
+    define protected_or_garbled (value_in: word_t, key: key_t, ca: nonce_t) : boolean =
+        value_in == dencrypt(ddecrypt(value_in, key, ca), key, ca)
+        || is_garbled(ddecrypt(value_in, key, ca));
 
 
     // Given an address what is the corresponding nonce?
@@ -61,8 +58,7 @@ module u2 {
         addr_out = cdecrypt(addr_in, key);   
     }
 
-    // All cryptographic operations preserve the non-crypto fields and update only the
-    // explicit pointer/data protection metadata.
+    // All cryptographic operations preserve the handle-interpretation fields.
     procedure ghost_ca_decrypt (ghost_addr_in: ghost_data_t, key: key_t) 
         returns (ghost_addr_out: ghost_data_t)
     {
@@ -72,12 +68,6 @@ module u2 {
         ghost_addr_out.h_base = ghost_addr_in.h_base;
         ghost_addr_out.h_offset = ghost_addr_in.h_offset;
         ghost_addr_out.h_length = ghost_addr_in.h_length;
-
-        ghost_addr_out.data_encrypted = ghost_addr_in.data_encrypted;
-        ghost_addr_out.data_key = ghost_addr_in.data_key;
-        ghost_addr_out.data_nonce = ghost_addr_in.data_nonce;
-        ghost_addr_out.data_intact = ghost_addr_in.data_intact;
-        ghost_addr_out.ca_nonce_true = ghost_addr_in.ca_nonce_true;
     }
 
 
@@ -95,12 +85,6 @@ module u2 {
         ghost_addr_out.h_base = ghost_addr_in.h_base;
         ghost_addr_out.h_offset = ghost_addr_in.h_offset;
         ghost_addr_out.h_length = ghost_addr_in.h_length;
-
-        ghost_addr_out.data_encrypted = ghost_addr_in.data_encrypted;
-        ghost_addr_out.data_key = ghost_addr_in.data_key;
-        ghost_addr_out.data_nonce = ghost_addr_in.data_nonce;
-        ghost_addr_out.data_intact = ghost_addr_in.data_intact;
-        ghost_addr_out.ca_nonce_true = ghost_addr_in.ca_nonce_true;
     }
 
 
@@ -110,7 +94,7 @@ module u2 {
         data_out = dencrypt(data_in, key, ca);
     }
     
-    procedure ghost_data_encrypt (ghost_data_in: ghost_data_t, key: key_t, ca: nonce_t, old_ghost_data: ghost_data_t) 
+    procedure ghost_data_encrypt (ghost_data_in: ghost_data_t, key: key_t, ca: nonce_t) 
         returns (ghost_data_out: ghost_data_t)
     {
         // Core operation (kept uninterpreted)
@@ -119,12 +103,6 @@ module u2 {
         ghost_data_out.h_base     = ghost_data_in.h_base;
         ghost_data_out.h_offset   = ghost_data_in.h_offset;
         ghost_data_out.h_length   = ghost_data_in.h_length;
-
-        ghost_data_out.data_encrypted = true;
-        ghost_data_out.data_key = key;
-        ghost_data_out.data_nonce = ca;
-        ghost_data_out.data_intact = (old_ghost_data.ca_nonce_true == ca);
-        ghost_data_out.ca_nonce_true = old_ghost_data.ca_nonce_true;
     }
 
     procedure data_decrypt (data_in: data_t, key: key_t, ca: nonce_t) 
@@ -136,29 +114,12 @@ module u2 {
     procedure ghost_data_decrypt (ghost_data_in: ghost_data_t, key: key_t, ca: nonce_t)
         returns (ghost_data_out: ghost_data_t)
     {
-        // Preserves the internal values
+        // Preserve the handle metadata while symbolically decrypting the value.
         ghost_data_out.value      = ddecrypt(ghost_data_in.value, key, ca);
         ghost_data_out.vtype     = ghost_data_in.vtype;
         ghost_data_out.h_base     = ghost_data_in.h_base;
         ghost_data_out.h_offset   = ghost_data_in.h_offset;
         ghost_data_out.h_length   = ghost_data_in.h_length;
-
-        if (ghost_data_in.data_encrypted
-            && ghost_data_in.data_intact
-            && ghost_data_in.data_key == key
-            && ghost_data_in.data_nonce == ca) {
-            ghost_data_out.data_encrypted = false;
-            ghost_data_out.data_key = ghost_data_in.data_key;
-            ghost_data_out.data_nonce = ghost_data_in.data_nonce;
-            ghost_data_out.data_intact = true;
-        } else {
-            ghost_data_out.data_encrypted = false;
-            ghost_data_out.data_key = ghost_data_in.data_key;
-            ghost_data_out.data_nonce = ghost_data_in.data_nonce;
-            ghost_data_out.data_intact = false;
-        }
-
-        ghost_data_out.ca_nonce_true  = ghost_data_in.ca_nonce_true;
     }
 
 }

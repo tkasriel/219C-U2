@@ -13,9 +13,19 @@ module u2 {
                     nm[a].alloc
                     && nm[a].lowend == as.allocg.h_base
                     && nm[a].highend == as.allocg.h_base + as.allocg.h_length
-                    // True nonce (currently needs to be non-shadow)
-                    // && nm[a].nonce_true == 
-                    //     slot_to_nonce(as.alloca.h_base, as.alloca.h_base + as.alloca.h_length)
+                )
+            ))
+            // Every cell in the new interval points to the same interval metadata.
+            && (forall (a1: word_t) :: (
+                forall (a2: word_t) :: (
+                    ((between (a1, as.allocg.h_base, (as.allocg.h_base + as.allocg.h_length)))
+                    && (between (a2, as.allocg.h_base, (as.allocg.h_base + as.allocg.h_length))))
+                    ==> (
+                        nm[a1].alloc
+                        && nm[a2].alloc
+                        && nm[a1].lowend == nm[a2].lowend
+                        && nm[a1].highend == nm[a2].highend
+                    )
                 )
             ))
             // Originally shadow_mem is unoccupied

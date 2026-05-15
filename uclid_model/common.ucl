@@ -32,15 +32,7 @@ module common {
         // This is the current handle offset
         h_offset: word_t,
         // Allocation is [h_base, h_base+h_length)
-        h_length: word_t,
-
-        // Data-protection ghost state
-        data_encrypted: boolean,
-        data_key: key_t,
-        data_nonce: nonce_t,
-        data_intact: boolean,
-        // True nonce for that allocation (used for authentication)
-        ca_nonce_true: nonce_t
+        h_length: word_t
     };
 
     type alloc_data_t = boolean;

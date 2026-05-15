@@ -52,12 +52,6 @@ module u2 {
         // Initially all values (in lmap and memory) hold raw data (not pointers)
         assume (forall (a: lmapind_t) :: ghost_lmap[a].vtype == RAW);
         assume (forall (a: word_t) :: ghost_mem[a].vtype == RAW);
-        assume (forall (a: lmapind_t) ::
-            !ghost_lmap[a].data_encrypted
-        );
-        assume (forall (a: word_t) ::
-            !ghost_mem[a].data_encrypted
-        );
 
         observable.valid = false;
         msv_curr = false;

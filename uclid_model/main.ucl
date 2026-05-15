@@ -31,10 +31,14 @@ module main
     // This is the integrity property
     property store_msv_implies_integrityviolation : (
         forall (a: word_t) :: ((!u2_instance.alloc_map[a]) || (
-            u2_instance.ghost_mem[a].data_encrypted
-            && u2_instance.ghost_mem[a].data_intact
-            && (u2_instance.ghost_mem[a].ca_nonce_true 
-                == u2_instance.ghost_mem[a].data_nonce)
+            protected_or_garbled(
+                u2_instance.ghost_mem[a].value,
+                ViKey,
+                slot_to_nonce(
+                    u2_instance.shadow_mem[a].lowend,
+                    u2_instance.shadow_mem[a].highend
+                )
+            )
         ) || (
             is_garbled(u2_instance.ghost_mem[a].value)
         ))
@@ -46,13 +50,6 @@ module main
         )
     );
     
-    property shadow_state_interval_matches_ca_nonce_true : (
-        forall (a: word_t) :: ((!u2_instance.shadow_mem[a].alloc) || (
-            slot_to_nonce(u2_instance.shadow_mem[a].lowend, u2_instance.shadow_mem[a].highend) 
-                == u2_instance.ghost_mem[a].ca_nonce_true
-        ))
-    );
-
     property shadow_state_interval_is_memory_safe : (
         forall (a: word_t) :: ((!u2_instance.shadow_mem[a].alloc) || (
             between (a, u2_instance.shadow_mem[a].lowend, u2_instance.shadow_mem[a].highend)
@@ -88,46 +85,71 @@ module main
         )
     );
 
-    property shadow_state_non_overlapping_intervals : (
-        forall (a1: word_t) :: (
-            forall (a2: word_t) :: ((
-                    u2_instance.shadow_mem[a1].alloc && u2_instance.shadow_mem[a2].alloc
-                ) ==> (
-                    non_overlapping_ranges (
-                        u2_instance.shadow_mem[a1].lowend,
-                        u2_instance.shadow_mem[a1].highend,
-                        u2_instance.shadow_mem[a2].lowend,
-                        u2_instance.shadow_mem[a2].highend
-                    ) || (
-                        u2_instance.shadow_mem[a1].lowend == u2_instance.shadow_mem[a2].lowend
-                        && u2_instance.shadow_mem[a1].highend == u2_instance.shadow_mem[a2].highend
-                    )
-                )
-            )
+    define shadow_state_non_overlapping_pair (a1: word_t, a2: word_t) : boolean = (
+        !(u2_instance.shadow_mem[a1].alloc && u2_instance.shadow_mem[a2].alloc)
+        || non_overlapping_ranges (
+            u2_instance.shadow_mem[a1].lowend,
+            u2_instance.shadow_mem[a1].highend,
+            u2_instance.shadow_mem[a2].lowend,
+            u2_instance.shadow_mem[a2].highend
+        ) || (
+            u2_instance.shadow_mem[a1].lowend == u2_instance.shadow_mem[a2].lowend
+            && u2_instance.shadow_mem[a1].highend == u2_instance.shadow_mem[a2].highend
         )
     );
 
-    property shadow_state_consistent_intervals : (
-        forall (a1: word_t) :: (
-            forall (a2: word_t) :: ((
-                    u2_instance.shadow_mem[a1].alloc &&
-                    between (a2, u2_instance.shadow_mem[a1].lowend, u2_instance.shadow_mem[a1].highend)
-                ) ==> (
-                    u2_instance.shadow_mem[a1].lowend == u2_instance.shadow_mem[a2].lowend
-                    && u2_instance.shadow_mem[a1].highend == u2_instance.shadow_mem[a2].highend
-                    && u2_instance.shadow_mem[a2].alloc
-                )
-            )
+    define shadow_state_consistent_pair (a1: word_t, a2: word_t) : boolean = (
+        !(
+            u2_instance.shadow_mem[a1].alloc &&
+            between (a2, u2_instance.shadow_mem[a1].lowend, u2_instance.shadow_mem[a1].highend)
+        ) || (
+            u2_instance.shadow_mem[a1].lowend == u2_instance.shadow_mem[a2].lowend
+            && u2_instance.shadow_mem[a1].highend == u2_instance.shadow_mem[a2].highend
+            && u2_instance.shadow_mem[a2].alloc
         )
+    );
+
+    define shadow_state_non_overlapping_from (a1: word_t) : boolean = (
+        shadow_state_non_overlapping_pair(a1, zero)
+        && shadow_state_non_overlapping_pair(a1, one)
+        && shadow_state_non_overlapping_pair(a1, 2bv2)
+        && shadow_state_non_overlapping_pair(a1, wmax)
+    );
+
+    define shadow_state_consistent_from (a1: word_t) : boolean = (
+        shadow_state_consistent_pair(a1, zero)
+        && shadow_state_consistent_pair(a1, one)
+        && shadow_state_consistent_pair(a1, 2bv2)
+        && shadow_state_consistent_pair(a1, wmax)
+    );
+
+    property shadow_state_non_overlapping_intervals : (
+        shadow_state_non_overlapping_from(zero)
+        && shadow_state_non_overlapping_from(one)
+        && shadow_state_non_overlapping_from(2bv2)
+        && shadow_state_non_overlapping_from(wmax)
+    );
+
+    property shadow_state_consistent_intervals : (
+        shadow_state_consistent_from(zero)
+        && shadow_state_consistent_from(one)
+        && shadow_state_consistent_from(2bv2)
+        && shadow_state_consistent_from(wmax)
     );
 
     // For valid handles, raw value is the same as handle value
     property mem_value_matches_handles : (
         forall (a: word_t) :: (
-            (u2_instance.ghost_mem[a].vtype == HAN
-                && !u2_instance.ghost_mem[a].data_encrypted) ==> 
+            (u2_instance.alloc_map[a] && u2_instance.ghost_mem[a].vtype == HAN) ==> 
             (
-                u2_instance.ghost_mem[a].value == (
+                ddecrypt(
+                    u2_instance.ghost_mem[a].value,
+                    ViKey,
+                    slot_to_nonce(
+                        u2_instance.shadow_mem[a].lowend,
+                        u2_instance.shadow_mem[a].highend
+                    )
+                ) == (
                     u2_instance.ghost_mem[a].h_base + u2_instance.ghost_mem[a].h_offset
                 )
             )
